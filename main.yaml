@@ -1,0 +1,317 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  DBName:
+    Type: String
+    Default: MyDatabase
+  DBUsername:
+    Type: String
+    Default: username
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: adminadmin
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+Resources:
+
+  BucketStaticDev:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: "static-website-matuuu60-dev"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html      
+        
+  BucketDynamicDev:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: "dynamic-website-matuuu60-dev"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html           
+
+
+  MyLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: s3://proof-new-cf-stack-bucket1/lambda_function.zip  # Reemplaza con el nombre de tu bucket
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt ProdVPC.DefaultSecurityGroup
+        SubnetIds:
+          - !Ref ProdSubnetLambda
+
+  MyExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  MyApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "1.0"
+          title: "My API"
+        paths:
+          /:
+            get:
+              produces:
+                - application/json
+              responses:
+                '200':
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                uri:
+                  Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyLambdaFunction.Arn}/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "GET"
+                type: "aws_proxy"
+
+          /{folder}:
+            get:
+              produces:
+                - application/json
+              parameters:
+                - name: folder
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                uri:
+                  Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyLambdaFunction.Arn}/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "GET"
+                type: "aws_proxy"
+
+          /{folder}/{item+}:
+            get:
+              produces:
+                - application/json
+              parameters:
+                - name: folder
+                  in: path
+                  required: true
+                  type: string
+                - name: item
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                uri:
+                  Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyLambdaFunction.Arn}/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "GET"
+                type: "aws_proxy"
+
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref DBName
+      Engine: postgres
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 20
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref ProdDBSubnetGroup
+      VPCSecurityGroups: 
+        - !GetAtt ProdVPC.DefaultSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      StorageType: gp2
+      Tags:
+        - Key: Name
+          Value: Prod RDS Instance
+
+  ProdDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for PROD RDS instance"
+      SubnetIds:
+        - !Ref ProdSubnetPostgreSQL
+        - !Ref ProdSubnetLambda
+        - !Ref ProdSubnetAPIGW
+      Tags:
+        - Key: Name
+          Value: Prod DB Subnet Group
+
+  DevDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for DEV RDS instance"
+      SubnetIds:
+        - !Ref DevSubnetPostgreSQL
+        - !Ref DevSubnetLambda
+        - !Ref DevSubnetAPIGW
+      Tags:
+        - Key: Name
+          Value: Dev DB Subnet Group
+
+  TestDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for TEST RDS instance"
+      SubnetIds:
+        - !Ref TestSubnetPostgreSQL
+        - !Ref TestSubnetLambda
+        - !Ref TestSubnetAPIGW
+      Tags:
+        - Key: Name
+          Value: Test DB Subnet Group
+
+# DEV ENVIRONMENT VPC
+  DevVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.34.0.0/16
+      Tags:
+        - Key: Name
+          Value: DEV ENVIRONMENT
+
+  DevSubnetPostgreSQL:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVPC
+      CidrBlock: 172.34.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Dev PostgreSQL Subnet
+
+  DevSubnetLambda:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVPC
+      CidrBlock: 172.34.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Dev Lambda Subnet
+
+  DevSubnetAPIGW:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVPC
+      CidrBlock: 172.34.3.0/24
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Dev APIGW Subnet
+
+# TEST ENVIRONMENT VPC
+  TestVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.35.0.0/16
+      Tags:
+        - Key: Name
+          Value: TEST ENVIRONMENT
+
+  TestSubnetPostgreSQL:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TestVPC
+      CidrBlock: 172.35.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Test PostgreSQL Subnet
+
+  TestSubnetLambda:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TestVPC
+      CidrBlock: 172.35.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Test Lambda Subnet
+
+  TestSubnetAPIGW:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TestVPC
+      CidrBlock: 172.35.3.0/24
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Test APIGW Subnet
+
+# PROD ENVIRONMENT VPC
+  ProdVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.36.0.0/16
+      Tags:
+        - Key: Name
+          Value: PROD ENVIRONMENT
+
+  ProdSubnetPostgreSQL:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProdVPC
+      CidrBlock: 172.36.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Prod PostgreSQL Subnet
+
+  ProdSubnetLambda:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProdVPC
+      CidrBlock: 172.36.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Prod Lambda Subnet
+
+  ProdSubnetAPIGW:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProdVPC
+      CidrBlock: 172.36.3.0/24
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Prod APIGW Subnet      
+
+Outputs:
+  DBEndpoint:
+    Value: !GetAtt MyDBInstance.Endpoint.Address
+    Description: "Database endpoint"
+  DBUsername:
+    Value: !Ref DBUsername
+    Description: "Database master username"
